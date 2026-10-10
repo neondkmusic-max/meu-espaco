@@ -600,7 +600,7 @@
     reflexoes: function () { return telaLista("reflexoes"); },
     gratidao: telaGratidao,
     versiculos: function () { return telaLista("versiculos"); },
-    assistente: async function () { telaAssistente(); },
+    assistente: telaAssistenteCriativo,
     config: async function () { telaConfig(); },
     gravador: telaGravador
   };
@@ -837,6 +837,25 @@
       if (acao === "gravPausar") return gravPausar();
       if (acao === "gravParar") return gravParar();
       if (acao === "excluirAudio") return excluirAudio(t.getAttribute("data-id"));
+      if (acao === "asstAba") {
+        ASST.aba = t.getAttribute("data-v"); ASST.entrada = ""; ASST.saida = ""; ASST.copias = [];
+        return telaAssistenteCriativo();
+      }
+      if (acao === "asstBuscar") {
+        var campo = document.getElementById("asstEntrada");
+        ASST.entrada = campo ? campo.value : "";
+        if (ASST.aba === "vocab") ASST.saida = resultadoVocab(ASST.entrada);
+        else if (ASST.aba === "rimas") ASST.saida = await resultadoRimas(ASST.entrada);
+        else ASST.saida = resultadoImagens(ASST.entrada);
+        return telaAssistenteCriativo();
+      }
+      if (acao === "asstOrg") {
+        var tx = document.getElementById("asstTexto");
+        ASST.entrada = tx ? tx.value : "";
+        ASST.saida = resultadoOrg(t.getAttribute("data-modo"), ASST.entrada);
+        return telaAssistenteCriativo();
+      }
+      if (acao === "asstCopiar") return copiarTexto(ASST.copias[Number(t.getAttribute("data-i"))]);
       if (acao === "exportar") return exportarBackup();
       if (acao === "importar") return document.getElementById("importArquivo").click();
       if (acao === "instalar") {
@@ -1281,6 +1300,234 @@
     } else {
       aviso("Restauração cancelada. Nada foi alterado.");
     }
+  }
+
+  /* ============ ASSISTENTE CRIATIVO LOCAL (Etapa 7) ============ */
+  var ASST = { aba: "vocab", entrada: "", saida: "", copias: [] };
+
+  // Vocabulário curado. As chaves estão sem acento. Você pode ampliar esta lista depois.
+  var VOCAB = {
+    saudade: { sinonimos: ["nostalgia", "falta", "lembrança"], suaves: ["recordação", "lembrança doce"], intensas: ["anseio", "desamparo"], poeticas: ["ausência que ainda aquece", "lembrança com gosto de antes", "eco de uma voz que não volta"], exemplo: "Ainda sinto sua falta nas tardes de domingo." },
+    tristeza: { sinonimos: ["melancolia", "pesar", "desalento"], suaves: ["desânimo leve", "um certo cinza"], intensas: ["desolação", "abatimento"], poeticas: ["nuvem baixa sobre o peito", "luz apagada por dentro", "chuva que não passa"], exemplo: "Há dias em que a tristeza chega sem pedir licença." },
+    alegria: { sinonimos: ["contentamento", "felicidade", "júbilo"], suaves: ["bem-estar", "leveza"], intensas: ["euforia", "êxtase"], poeticas: ["sol que entra pela janela", "riso que escapa sem pedir licença", "passarinho que canta cedo"], exemplo: "A alegria voltou quando ouvi a sua voz." },
+    amor: { sinonimos: ["afeto", "carinho", "ternura"], suaves: ["afeição", "simpatia"], intensas: ["paixão", "devoção"], poeticas: ["fio que une duas almas", "calor que não se explica", "casa que se abre para quem chega"], exemplo: "O amor ensina a esperar sem deixar de cuidar." },
+    paz: { sinonimos: ["calma", "sossego", "tranquilidade"], suaves: ["quietude", "serenidade"], intensas: ["plenitude"], poeticas: ["lago sem vento", "respiração que desacelera", "chão firme depois da tempestade"], exemplo: "Encontrei paz no silêncio da manhã." },
+    esperanca: { sinonimos: ["confiança", "expectativa", "fé no amanhã"], suaves: ["expectativa", "desejo"], intensas: ["certeza"], poeticas: ["broto que rompe o asfalto", "luz no fim do corredor", "semente que espera a chuva"], exemplo: "Mesmo cansada, guardo esperança no amanhã." },
+    medo: { sinonimos: ["receio", "temor", "apreensão"], suaves: ["cautela", "insegurança"], intensas: ["pavor", "terror"], poeticas: ["sombra que cresce no escuro", "nó na garganta", "passo que treme antes de sair"], exemplo: "O medo pediu para ficar, mas eu segui." },
+    coragem: { sinonimos: ["bravura", "ousadia", "determinação"], suaves: ["disposição", "ânimo"], intensas: ["audácia", "destemor"], poeticas: ["passo firme sobre o incerto", "voz que atravessa o silêncio"], exemplo: "Reuni coragem e dei o primeiro passo." },
+    silencio: { sinonimos: ["quietude", "calmaria", "pausa"], suaves: ["calma", "pausa"], intensas: ["mutismo"], poeticas: ["espaço onde cabe tudo", "pássaro que não canta", "página em branco que espera"], exemplo: "No silêncio, ouvi o que eu já sabia." },
+    luz: { sinonimos: ["claridade", "brilho", "reflexo"], suaves: ["clarão", "resquício"], intensas: ["resplendor"], poeticas: ["fresta por onde a manhã entra", "fio dourado no fundo da noite"], exemplo: "Uma luz fraca apareceu na janela." },
+    noite: { sinonimos: ["escuridão", "madrugada", "breu"], suaves: ["anoitecer", "entardecer"], intensas: ["breu"], poeticas: ["manto que cobre a cidade", "tempo em que os pensamentos falam alto"], exemplo: "A noite sempre traz perguntas que o dia esconde." },
+    vida: { sinonimos: ["existência", "jornada", "caminhada"], suaves: ["trajetória", "rotina"], intensas: ["pulsação"], poeticas: ["rio que não para", "tecido que a gente vai bordando"], exemplo: "A vida tem curvas que só se entendem depois." },
+    sonho: { sinonimos: ["ideal", "desejo", "utopia"], suaves: ["vontade", "projeto"], intensas: ["obsessão"], poeticas: ["semente que ainda não brotou", "ponte entre o agora e o que virá"], exemplo: "Meu sonho cabe numa canção ainda por terminar." },
+    gratidao: { sinonimos: ["reconhecimento", "agradecimento", "apreço"], suaves: ["apreço", "estima"], intensas: ["reverência"], poeticas: ["mãos que se abrem para receber", "flor que floresce no coração"], exemplo: "Sou grata por cada coisa boa que chegou hoje." },
+    caminho: { sinonimos: ["trajeto", "rota", "percurso"], suaves: ["trajeto", "direção"], intensas: ["jornada"], poeticas: ["trilha que se abre a cada passo", "fio de estrada entre dois pontos"], exemplo: "Ainda não sei o fim do caminho, mas sigo." },
+    mar: { sinonimos: ["oceano", "água grande", "onda"], suaves: ["brisa do litoral"], intensas: ["imensidão"], poeticas: ["espelho de céu sem fim", "voz antiga que não cala"], exemplo: "Sentei na areia e deixei o mar falar por mim." },
+    chuva: { sinonimos: ["aguaceiro", "garoa", "temporal"], suaves: ["garoa", "chuvisco"], intensas: ["temporal", "tempestade"], poeticas: ["lágrima do céu", "música que cai sobre o telhado"], exemplo: "A chuva apagou os barulhos da rua." },
+    lagrima: { sinonimos: ["pranto", "choro", "gota de sal"], suaves: ["suspiro molhado"], intensas: ["soluço"], poeticas: ["rio pequeno que escorre do rosto", "gota que carrega uma história"], exemplo: "Uma lágrima escorreu sem que eu percebesse." },
+    coracao: { sinonimos: ["peito", "íntimo", "alma"], suaves: ["íntimo"], intensas: ["alma inteira"], poeticas: ["tambor que não sabe parar", "casa onde ficam os sentimentos"], exemplo: "Meu coração ainda guarda aquele dia." },
+    solidao: { sinonimos: ["isolamento", "abandono", "retiro"], suaves: ["recolhimento"], intensas: ["desamparo"], poeticas: ["cadeira vazia ao lado", "eco dentro de uma casa cheia"], exemplo: "Na solidão, aprendi a ouvir a mim mesma." },
+    cansaco: { sinonimos: ["exaustão", "fadiga", "esgotamento"], suaves: ["indisposição"], intensas: ["esgotamento total"], poeticas: ["peso que não se larga", "corpo pedindo pausa"], exemplo: "O cansaço chegou antes do fim do dia." },
+    forca: { sinonimos: ["vigor", "energia", "potência"], suaves: ["ânimo"], intensas: ["vigor"], poeticas: ["raiz que segura a árvore na tempestade"], exemplo: "Encontrei força para recomeçar." }
+  };
+
+  // Palavras-base para rimas. Palavras dos seus textos também são usadas.
+  var PALAVRAS_RIMA = ["amor","dor","cor","flor","calor","sabor","valor","favor","temor","sol","lencol","anzol","mao","coracao","razao","paixao","cancao","ilusao","emocao","solidao","direcao","oracao","vida","ferida","partida","saida","despedida","medida","querida","perdida","luz","cruz","conduz","saudade","verdade","liberdade","cidade","felicidade","bondade","vontade","tempestade","estrada","madrugada","alvorada","jornada","mar","lugar","olhar","sonhar","chorar","falar","cantar","esperar","voar","luar","altar","ceu","veu","papel","nuvem","viver","renascer","noite","alegria","poesia","melodia","harmonia","paz","capaz","jamais","vento","momento","sentimento","pensamento","alento","silencio","tempo","espelho","conselho","caminho","carinho","brilho","tudo","estrela","janela","tela","pele","fe","cafe","sorrir","partir","sentir","porvir","segredo","medo","cedo","enredo"];
+
+  var PALAVRAS_EMOCIONAIS = ["triste","tristeza","feliz","alegria","medo","angustia","ansiosa","ansioso","cansada","cansado","sozinha","sozinho","saudade","amor","grata","grato","paz","esperanca","dor","raiva","culpa","vergonha","chateada","preocupada","sobrecarregada","confusa","desanimada","solidao","coragem","gratidao","lagrima","choro"];
+  var PALAVRAS_DUVIDA = ["sera","devo","como faco","o que","e se","nao sei","duvida"];
+  var PALAVRAS_VAZIAS = ["para","quando","mesmo","sobre","depois","antes","ainda","muito","isso","essa","esse","estou","estava","tenho","tinha","fazer","tambem","coisa","coisas","entao","assim","quero","pode","minha","meu","meus","minhas","nosso","nossa","aqui","hoje","ontem","amanha","todo","toda","tudo","nada","algo","quem","onde","sempre","nunca","pelo","pela","entre","sem","com","uma","umas","uns","aquele","aquela","ainda","porque","vendo","foram","fosse","seria","sendo"];
+
+  function frasesDoTexto(t) {
+    return String(t || "").split(/[.!?\n]+/).map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 1; });
+  }
+
+  function classificarFrase(s) {
+    var n = SEM_ACENTO(s);
+    if (PALAVRAS_DUVIDA.some(function (d) { return n.indexOf(d) >= 0; })) return "duvidas";
+    if (PALAVRAS_EMOCIONAIS.some(function (e) { return new RegExp("\\b" + e + "\\b").test(n); })) return "sentimentos";
+    return "fatos";
+  }
+
+  // Final da rima: a partir da última sequência de vogais (ex.: amor -> or, coração -> ao).
+  function fimRima(n) {
+    var m = n.match(/[aeiou]+[^aeiou]*$/);
+    return m ? m[0] : n;
+  }
+
+  async function bancoRimas() {
+    var textos = [];
+    try {
+      (await listar("nota")).forEach(function (n) { textos.push(n.titulo || "", n.texto || ""); });
+      (await listar("musica")).forEach(function (m) { textos.push(m.titulo || "", m.letra || ""); });
+    } catch (e) {}
+    var palavras = PALAVRAS_RIMA.concat(textos.join(" ").split(/[^A-Za-zÀ-ÿ]+/).filter(function (w) { return w.length >= 3; }));
+    var vistos = {}, banco = [];
+    palavras.forEach(function (w) {
+      var k = SEM_ACENTO(w);
+      if (!vistos[k]) { vistos[k] = true; banco.push(w); }
+    });
+    return banco;
+  }
+
+  function copiarFallback(texto) {
+    var ta = document.createElement("textarea");
+    ta.value = texto; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); aviso("Copiado. Cole onde quiser."); }
+    catch (e) { aviso("Não consegui copiar. Selecione o texto e copie manualmente."); }
+    ta.remove();
+  }
+
+  function copiarTexto(texto) {
+    if (!texto) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(texto)
+        .then(function () { aviso("Copiado. Cole onde quiser."); })
+        .catch(function () { copiarFallback(texto); });
+    } else {
+      copiarFallback(texto);
+    }
+  }
+
+  function itemCopiavel(texto) {
+    ASST.copias.push(texto);
+    return '<div class="item"><p class="previa">' + esc(texto) + '</p>' +
+      '<div class="acoes-mini"><button class="link" data-a="asstCopiar" data-i="' + (ASST.copias.length - 1) + '">Copiar</button></div></div>';
+  }
+
+  function blocoResultado(titulo, itens) {
+    return '<div class="secao-titulo">' + titulo + "</div>" +
+      (itens.length ? itens.map(itemCopiavel).join("") : '<p class="dica">Nada encontrado.</p>');
+  }
+
+  function resultadoVocab(p) {
+    ASST.copias = [];
+    if (!p.trim()) return '<p class="dica">Digite uma palavra para ver sugestões.</p>';
+    var e = VOCAB[SEM_ACENTO(p).trim()];
+    if (!e) return '<p class="dica">Ainda não tenho sugestões para “' + esc(p) + '”. Tente palavras como saudade, paz, luz, medo, esperança, amor ou silêncio.</p>';
+    return blocoResultado("Sinônimos", e.sinonimos) +
+      blocoResultado("Mais suaves", e.suaves) +
+      blocoResultado("Mais intensas", e.intensas) +
+      blocoResultado("Alternativas mais poéticas", e.poeticas) +
+      blocoResultado("Exemplo de uso", [e.exemplo]);
+  }
+
+  async function resultadoRimas(p) {
+    ASST.copias = [];
+    var n = SEM_ACENTO(p).trim();
+    if (!n) return '<p class="dica">Digite uma palavra para ver rimas.</p>';
+    var fim = fimRima(n);
+    var banco = await bancoRimas();
+    var exatas = banco.filter(function (w) { var m = SEM_ACENTO(w); return m !== n && fimRima(m) === fim; }).slice(0, 20);
+    var aprox = banco.filter(function (w) {
+      var m = SEM_ACENTO(w);
+      return m !== n && fimRima(m) !== fim && m.slice(-2) === n.slice(-2);
+    }).slice(0, 15);
+    return blocoResultado("Rimas exatas (o som final é igual)", exatas) +
+      blocoResultado("Rimas aproximadas (o som é parecido, mas não é perfeito)", aprox);
+  }
+
+  function resultadoImagens(p) {
+    ASST.copias = [];
+    var t = p.trim();
+    if (!t) return '<p class="dica">Digite uma emoção ou ideia para ver imagens.</p>';
+    var e = VOCAB[SEM_ACENTO(t)];
+    if (!e) return '<p class="dica">Ainda não tenho imagens para “' + esc(t) + '”. Tente saudade, tristeza, paz, luz, mar ou silêncio.</p>';
+    var titulo = t.charAt(0).toUpperCase() + t.slice(1);
+    return blocoResultado("Imagens poéticas", e.poeticas) +
+      blocoResultado("Comparações para inspirar", e.poeticas.map(function (i) { return titulo + " é como " + i + "."; }));
+  }
+
+  function resultadoOrg(modo, texto) {
+    ASST.copias = [];
+    var fr = frasesDoTexto(texto);
+    if (!fr.length) return '<p class="dica">Escreva alguns pensamentos primeiro.</p>';
+
+    if (modo === "topicos") {
+      return blocoResultado("Pensamentos em tópicos", [fr.map(function (s) { return "• " + s; }).join("\n")]);
+    }
+    if (modo === "separar") {
+      var g = { fatos: [], sentimentos: [], duvidas: [] };
+      fr.forEach(function (s) { g[classificarFrase(s)].push(s); });
+      return blocoResultado("Fatos", g.fatos.map(function (s) { return "• " + s; })) +
+        blocoResultado("Sentimentos", g.sentimentos.map(function (s) { return "• " + s; })) +
+        blocoResultado("Dúvidas", g.duvidas.map(function (s) { return "• " + s; })) +
+        '<p class="dica">Esta separação é automática e pode errar. Ajuste o que for preciso.</p>';
+    }
+    if (modo === "temas") {
+      var cont = {}, original = {};
+      fr.join(" ").split(/[^A-Za-zÀ-ÿ]+/).forEach(function (w) {
+        var k = SEM_ACENTO(w);
+        if (k.length > 4 && PALAVRAS_VAZIAS.indexOf(k) < 0) {
+          cont[k] = (cont[k] || 0) + 1;
+          if (!original[k]) original[k] = w;
+        }
+      });
+      var top = Object.keys(cont).sort(function (a, b) { return cont[b] - cont[a]; }).slice(0, 6);
+      return blocoResultado("Temas que mais aparecem", top.length ? [top.map(function (k) { return original[k]; }).join(", ")] : []);
+    }
+    if (modo === "perguntas") {
+      var perg = ["Isso depende de algo que está ao seu alcance agora?",
+        "O que você diria a uma amiga que estivesse passando por isso?",
+        "Há algo nisso que já deu certo antes?"];
+      var cls = fr.map(classificarFrase);
+      if (cls.indexOf("sentimentos") >= 0) perg.unshift("O que mais pesa nisso hoje?");
+      if (cls.indexOf("duvidas") >= 0) perg.unshift("Que informação falta para você decidir?");
+      return blocoResultado("Perguntas para refletir", perg.slice(0, 4));
+    }
+    if (modo === "letra") {
+      var linhas = fr.map(function (s) { return s.charAt(0).toUpperCase() + s.slice(1); });
+      var estrofes = [];
+      for (var i = 0; i < linhas.length; i += 4) estrofes.push(linhas.slice(i, i + 4).join("\n"));
+      var rep = {};
+      fr.forEach(function (s) { var k = SEM_ACENTO(s); rep[k] = (rep[k] || 0) + 1; });
+      var repetida = Object.keys(rep).filter(function (k) { return rep[k] > 1; })[0];
+      var refrao = repetida ? fr.filter(function (s) { return SEM_ACENTO(s) === repetida; })[0] : null;
+      return blocoResultado("Estrutura inicial da letra (você pode editar)", [estrofes.join("\n\n")]) +
+        (refrao
+          ? blocoResultado("Refrão sugerido (frase que se repete)", [refrao])
+          : '<p class="dica">Nenhuma frase se repete. Se quiser um refrão, escreva uma frase que resuma o sentimento principal.</p>');
+    }
+    if (modo === "resumo") {
+      var principais = texto.split(/\n\s*\n/).map(function (p) { return frasesDoTexto(p)[0]; }).filter(Boolean);
+      if (!principais.length) principais = [fr[0]];
+      return blocoResultado("Trechos principais (com suas próprias palavras)", principais.map(function (s) { return "• " + s; })) +
+        '<p class="dica">Este resumo apenas escolhe trechos do seu texto. Nada foi alterado.</p>';
+    }
+    return "";
+  }
+
+  function blocoEntrada(aba) {
+    if (aba === "organizar") {
+      var modos = [["topicos", "Tópicos"], ["separar", "Fatos e sentimentos"], ["temas", "Temas"],
+        ["perguntas", "Perguntas de reflexão"], ["letra", "Estrutura de letra"], ["resumo", "Resumo"]];
+      return '<div class="card form"><label for="asstTexto">Escreva ou cole seus pensamentos</label>' +
+        '<textarea id="asstTexto" rows="7" placeholder="Escreva do jeito que sair...">' + esc(ASST.entrada) + "</textarea>" +
+        '<div class="chips">' + modos.map(function (m) {
+          return '<button class="chip" data-a="asstOrg" data-modo="' + m[0] + '">' + m[1] + "</button>";
+        }).join("") + "</div>" +
+        '<p class="dica">Reescrever com clareza, mantendo a sua voz, precisa de uma IA externa e ainda não está disponível aqui.</p></div>';
+    }
+    var dicas = {
+      vocab: ["Digite uma palavra", "ex.: saudade, paz, luz"],
+      rimas: ["Digite uma palavra", "ex.: amor"],
+      imagens: ["Digite uma emoção ou ideia", "ex.: saudade"]
+    };
+    return '<div class="card form"><label for="asstEntrada">' + dicas[aba][0] + "</label>" +
+      '<input id="asstEntrada" value="' + esc(ASST.entrada) + '" placeholder="' + dicas[aba][1] + '">' +
+      '<button class="botao-principal" data-a="asstBuscar">Buscar</button></div>';
+  }
+
+  async function telaAssistenteCriativo() {
+    var abas = [["vocab", "Vocabulário"], ["rimas", "Rimas"], ["imagens", "Imagens"], ["organizar", "Organizar"]];
+    document.getElementById("pagina").innerHTML = cabecalho("Meu Assistente Criativo", "inicio") +
+      '<div class="abas">' + abas.map(function (a) {
+        return '<button class="aba ' + (ASST.aba === a[0] ? "ativa" : "") + '" data-a="asstAba" data-v="' + a[0] + '">' + a[1] + "</button>";
+      }).join("") + "</div>" +
+      blocoEntrada(ASST.aba) +
+      (ASST.saida || "") +
+      '<p class="dica">Tudo funciona neste aparelho, sem internet. Nenhum texto seu é enviado para fora.</p>';
   }
 
   /* ============ INÍCIO ============ */
