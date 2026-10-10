@@ -143,8 +143,8 @@
   .linha { display: flex; gap: 8px; margin-top: 6px; }
   .linha input { flex: 1; min-height: 48px; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
 
-  .abas { display: flex; gap: 8px; margin-bottom: 14px; }
-  .aba { flex: 1; min-height: 48px; border-radius: 14px; border: 1px solid var(--line); background: var(--card); }
+  .abas { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .aba { flex: 1 1 110px; min-height: 48px; border-radius: 14px; border: 1px solid var(--line); background: var(--card); }
   .aba.ativa { background: var(--sage); color: #fff; border-color: var(--sage); }
 
   .opcao {
@@ -838,7 +838,7 @@
       if (acao === "gravParar") return gravParar();
       if (acao === "excluirAudio") return excluirAudio(t.getAttribute("data-id"));
       if (acao === "asstAba") {
-        ASST.aba = t.getAttribute("data-v"); ASST.entrada = ""; ASST.saida = ""; ASST.copias = [];
+        ASST.aba = t.getAttribute("data-v"); ASST.entrada = ""; ASST.saida = ""; ASST.copias = []; ASST.pendente = null;
         return telaAssistenteCriativo();
       }
       if (acao === "asstBuscar") {
@@ -853,6 +853,43 @@
         var tx = document.getElementById("asstTexto");
         ASST.entrada = tx ? tx.value : "";
         ASST.saida = resultadoOrg(t.getAttribute("data-modo"), ASST.entrada);
+        return telaAssistenteCriativo();
+      }
+      if (acao === "asstPedirIA") {
+        var tipoIA = t.getAttribute("data-tipo");
+        if (tipoIA === "reescrever") {
+          var tx = document.getElementById("asstTexto");
+          var texto = tx ? tx.value.trim() : "";
+          if (!texto) { aviso("Escreva um texto primeiro."); return; }
+          ASST.entrada = texto;
+          ASST.pendente = {
+            prompt: "Reescreva o texto abaixo em português, com mais clareza. Mantenha o tom pessoal, a voz e os sentimentos originais. Não acrescente fatos que não estão no texto. Devolva apenas o texto reescrito.\n\nTexto:\n" + texto
+          };
+        } else {
+          var campoIA = document.getElementById("asstEntrada");
+          var palavra = campoIA ? campoIA.value.trim() : "";
+          if (!palavra) { aviso("Digite uma palavra primeiro."); return; }
+          ASST.entrada = palavra;
+          ASST.pendente = {
+            prompt: "Crie duas linhas de letra de música em português, simples e acolhedoras, que rimem com a palavra \"" + palavra + "\". Devolva apenas as duas linhas."
+          };
+        }
+        return telaAssistenteCriativo();
+      }
+      if (acao === "asstEnviar") {
+        var consent = document.getElementById("asstConsentimento");
+        if (!consent || !consent.checked) { aviso("Marque a autorização para enviar este texto."); return; }
+        var servico = document.getElementById("asstServico").value;
+        var envio = ASST.pendente;
+        if (!envio) return;
+        copiarTexto(envio.prompt);
+        window.open(servico, "_blank", "noopener");
+        ASST.pendente = null;
+        ASST.saida = '<p class="dica">O texto foi copiado. No serviço que abriu, cole o texto e envie. Se quiser, copie a resposta e guarde em uma nota.</p>';
+        return telaAssistenteCriativo();
+      }
+      if (acao === "asstCancelar") {
+        ASST.pendente = null;
         return telaAssistenteCriativo();
       }
       if (acao === "asstCopiar") return copiarTexto(ASST.copias[Number(t.getAttribute("data-i"))]);
@@ -1303,7 +1340,7 @@
   }
 
   /* ============ ASSISTENTE CRIATIVO LOCAL (Etapa 7) ============ */
-  var ASST = { aba: "vocab", entrada: "", saida: "", copias: [] };
+  var ASST = { aba: "vocab", entrada: "", saida: "", copias: [], pendente: null };
 
   // Vocabulário curado. As chaves estão sem acento. Você pode ampliar esta lista depois.
   var VOCAB = {
@@ -1507,7 +1544,8 @@
         '<div class="chips">' + modos.map(function (m) {
           return '<button class="chip" data-a="asstOrg" data-modo="' + m[0] + '">' + m[1] + "</button>";
         }).join("") + "</div>" +
-        '<p class="dica">Reescrever com clareza, mantendo a sua voz, precisa de uma IA externa e ainda não está disponível aqui.</p></div>';
+        '<button class="botao-secundario" data-a="asstPedirIA" data-tipo="reescrever" style="width:100%">Reescrever com IA externa (opcional)</button>' +
+        '<p class="dica">A IA é opcional. Antes de qualquer envio, você vê o texto completo e dá sua autorização.</p></div>';
     }
     var dicas = {
       vocab: ["Digite uma palavra", "ex.: saudade, paz, luz"],
@@ -1516,7 +1554,32 @@
     };
     return '<div class="card form"><label for="asstEntrada">' + dicas[aba][0] + "</label>" +
       '<input id="asstEntrada" value="' + esc(ASST.entrada) + '" placeholder="' + dicas[aba][1] + '">' +
-      '<button class="botao-principal" data-a="asstBuscar">Buscar</button></div>';
+      '<button class="botao-principal" data-a="asstBuscar">Buscar</button>' +
+      (aba === "rimas"
+        ? '<button class="botao-secundario" data-a="asstPedirIA" data-tipo="versos" style="width:100%">Criar versos com IA externa (opcional)</button>'
+        : "") +
+      "</div>";
+  }
+
+  function blocoEnvio(p) {
+    var servicos = [
+      ["https://gemini.google.com/app", "Gemini (Google)"],
+      ["https://chatgpt.com", "ChatGPT (OpenAI)"],
+      ["https://copilot.microsoft.com", "Copilot (Microsoft)"]
+    ];
+    return '<div class="card form">' +
+      '<div class="secao-titulo" style="margin-top:0">Enviar para uma IA externa</div>' +
+      '<p class="dica"><strong>Atenção:</strong> este texto sairá do seu aparelho e será tratado pelo serviço que você escolher. ' +
+      "Os planos gratuitos podem ter limites e mudar. Confira as condições desse serviço antes de usar.</p>" +
+      "<label>Isto será enviado:</label>" +
+      '<textarea readonly rows="6">' + esc(p.prompt) + "</textarea>" +
+      '<label for="asstServico">Serviço</label>' +
+      '<select id="asstServico">' + servicos.map(function (s) {
+        return '<option value="' + s[0] + '">' + s[1] + "</option>";
+      }).join("") + "</select>" +
+      '<label class="check"><input type="checkbox" id="asstConsentimento"> Autorizo enviar exatamente este texto para o serviço escolhido, nesta vez.</label>' +
+      '<div class="acoes"><button class="botao-principal" data-a="asstEnviar">Copiar e abrir serviço</button>' +
+      '<button class="botao-secundario" data-a="asstCancelar">Cancelar</button></div></div>';
   }
 
   async function telaAssistenteCriativo() {
@@ -1526,6 +1589,7 @@
         return '<button class="aba ' + (ASST.aba === a[0] ? "ativa" : "") + '" data-a="asstAba" data-v="' + a[0] + '">' + a[1] + "</button>";
       }).join("") + "</div>" +
       blocoEntrada(ASST.aba) +
+      (ASST.pendente ? blocoEnvio(ASST.pendente) : "") +
       (ASST.saida || "") +
       '<p class="dica">Tudo funciona neste aparelho, sem internet. Nenhum texto seu é enviado para fora.</p>';
   }
