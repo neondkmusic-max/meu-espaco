@@ -1340,6 +1340,10 @@
   }
 
   /* ============ ASSISTENTE CRIATIVO LOCAL (Etapa 7) ============ */
+  var SEM_ACENTO = function (s) {
+    return String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  };
+
   var ASST = { aba: "vocab", entrada: "", saida: "", copias: [], pendente: null };
 
   // Vocabulário curado. As chaves estão sem acento. Você pode ampliar esta lista depois.
