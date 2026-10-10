@@ -575,8 +575,20 @@
     document.getElementById("pagina").innerHTML = cabecalho("Configurações e Backup", "inicio") +
       '<div class="secao-titulo">Aparência</div>' +
       '<button class="opcao" data-a="tema"><span>Modo escuro</span><span class="chave ' + (escuroAtivo() ? "ligada" : "") + '"></span></button>' +
-      '<div class="secao-titulo">Dados</div>' +
-      '<div class="card dica">Seus registros ficam guardados somente neste aparelho. O backup chega na Etapa 6.</div>';
+      '<div class="secao-titulo">Instalar</div>' +
+      (INSTALAR_EVENTO
+        ? '<button class="opcao" data-a="instalar"><span>Instalar Meu Espaço na tela inicial</span><span>📲</span></button>'
+        : '<div class="card dica">Para instalar: toque nos três pontos do Chrome e escolha “Instalar app”. Se só aparecer “Adicionar à tela inicial”, abra o app pelo endereço do GitHub (com https://) e recarregue a página uma vez.</div>') +
+      '<div class="secao-titulo">Backup e restauração</div>' +
+      '<div class="card dica">' +
+        (lerUltimoBackup()
+          ? "Último backup: " + fmtDH(lerUltimoBackup()) + "."
+          : "Você ainda não fez nenhum backup. Seus dados ficam só neste aparelho, então faça um agora.") +
+        " Guarde o arquivo em um lugar seguro, como o Google Drive ou seu computador." +
+      "</div>" +
+      '<button class="botao-principal" data-a="exportar">Exportar backup</button>' +
+      '<button class="botao-secundario" data-a="importar" style="width:100%;min-height:52px">Importar backup</button>' +
+      '<input type="file" id="importArquivo" accept=".zip,.json,application/zip,application/json" style="display:none">';
   }
 
   var ROTAS = {
@@ -825,11 +837,28 @@
       if (acao === "gravPausar") return gravPausar();
       if (acao === "gravParar") return gravParar();
       if (acao === "excluirAudio") return excluirAudio(t.getAttribute("data-id"));
+      if (acao === "exportar") return exportarBackup();
+      if (acao === "importar") return document.getElementById("importArquivo").click();
+      if (acao === "instalar") {
+        if (!INSTALAR_EVENTO) { aviso("Use os três pontos do Chrome e escolha “Instalar app”."); return; }
+        INSTALAR_EVENTO.prompt();
+        await INSTALAR_EVENTO.userChoice;
+        INSTALAR_EVENTO = null;
+        return irPara("config");
+      }
       if (acao === "tema") return alternarTema();
       if (acao === "avisoEtapa") return aviso(t.getAttribute("data-msg"));
     } catch (err) {
       console.error(err);
       aviso("Não foi possível concluir. Seus dados anteriores continuam guardados.");
+    }
+  });
+
+  document.addEventListener("change", function (e) {
+    if (e.target && e.target.id === "importArquivo") {
+      var arquivo = e.target.files && e.target.files[0];
+      e.target.value = "";
+      importarArquivo(arquivo);
     }
   });
 
@@ -853,6 +882,7 @@
   var GRV = { rec: null, stream: null, partes: [], mime: "", inicio: 0, tempoPausado: 0, pausadoEm: 0, timer: null };
   var URLS_AUDIO = [];
   var PERSISTENTE = false;
+  var INSTALAR_EVENTO = null;
 
   function formatarTempo(ms) { var s = Math.floor(ms / 1000); return pad(Math.floor(s / 60)) + ":" + pad(s % 60); }
   function tempoDecorrido() { var fim = GRV.pausadoEm || Date.now(); return Math.max(0, fim - GRV.inicio - GRV.tempoPausado); }
@@ -1057,12 +1087,213 @@
     if (GRV.rec) { e.preventDefault(); e.returnValue = ""; }
   });
 
+  /* ============ BACKUP E RESTAURAÇÃO (Etapa 6) ============ */
+  var TIPOS_VALIDOS = ["nota", "musica", "oracao", "reflexao", "gratidao", "humor", "desabafo", "versiculo", "audio"];
+  var ROTULOS = {
+    nota: "notas", musica: "músicas", oracao: "orações", reflexao: "reflexões", gratidao: "gratidões",
+    humor: "registros de humor", desabafo: "desabafos", versiculo: "versículos", audio: "gravações"
+  };
+
+  var CRC_TABELA = (function () {
+    var t = [];
+    for (var n = 0; n < 256; n++) {
+      var c = n;
+      for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+
+  function crc32(bytes) {
+    var c = 0xFFFFFFFF;
+    for (var i = 0; i < bytes.length; i++) c = CRC_TABELA[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  // Cria um ZIP sem compressão (os áudios já vêm comprimidos).
+  function criarZip(entradas) {
+    var enc = new TextEncoder();
+    var partes = [], central = [], offset = 0;
+    entradas.forEach(function (en) {
+      var nome = enc.encode(en.nome), dados = en.dados, crc = crc32(dados);
+      var cab = new DataView(new ArrayBuffer(30));
+      cab.setUint32(0, 0x04034b50, true); cab.setUint16(4, 20, true); cab.setUint16(6, 0x0800, true);
+      cab.setUint16(8, 0, true); cab.setUint16(10, 0, true); cab.setUint16(12, 0x21, true);
+      cab.setUint32(14, crc, true); cab.setUint32(18, dados.length, true); cab.setUint32(22, dados.length, true);
+      cab.setUint16(26, nome.length, true); cab.setUint16(28, 0, true);
+      partes.push(new Uint8Array(cab.buffer), nome, dados);
+
+      var cen = new DataView(new ArrayBuffer(46));
+      cen.setUint32(0, 0x02014b50, true); cen.setUint16(4, 20, true); cen.setUint16(6, 20, true);
+      cen.setUint16(8, 0x0800, true); cen.setUint16(10, 0, true); cen.setUint16(12, 0, true); cen.setUint16(14, 0x21, true);
+      cen.setUint32(16, crc, true); cen.setUint32(20, dados.length, true); cen.setUint32(24, dados.length, true);
+      cen.setUint16(28, nome.length, true); cen.setUint16(30, 0, true); cen.setUint16(32, 0, true);
+      cen.setUint16(34, 0, true); cen.setUint16(36, 0, true); cen.setUint32(38, 0, true); cen.setUint32(42, offset, true);
+      central.push(new Uint8Array(cen.buffer), nome);
+      offset += 30 + nome.length + dados.length;
+    });
+    var tamCentral = central.reduce(function (s, p) { return s + p.length; }, 0);
+    var fim = new DataView(new ArrayBuffer(22));
+    fim.setUint32(0, 0x06054b50, true); fim.setUint16(4, 0, true); fim.setUint16(6, 0, true);
+    fim.setUint16(8, entradas.length, true); fim.setUint16(10, entradas.length, true);
+    fim.setUint32(12, tamCentral, true); fim.setUint32(16, offset, true); fim.setUint16(20, 0, true);
+    return new Blob(partes.concat(central, [new Uint8Array(fim.buffer)]), { type: "application/zip" });
+  }
+
+  // Lê um ZIP criado pelo próprio app (sem compressão).
+  function lerZip(buf) {
+    var dv = new DataView(buf), bytes = new Uint8Array(buf), eocd = -1;
+    for (var i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65557); i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error("ZIP inválido");
+    var total = dv.getUint16(eocd + 10, true), p = dv.getUint32(eocd + 16, true);
+    var dec = new TextDecoder(), out = {};
+    for (var k = 0; k < total; k++) {
+      if (dv.getUint32(p, true) !== 0x02014b50) throw new Error("ZIP inválido");
+      var metodo = dv.getUint16(p + 10, true), tam = dv.getUint32(p + 20, true);
+      var nl = dv.getUint16(p + 28, true), el = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true);
+      var locOff = dv.getUint32(p + 42, true);
+      var nome = dec.decode(bytes.subarray(p + 46, p + 46 + nl));
+      if (metodo !== 0) throw new Error("ZIP com compressão não suportada");
+      var ln = dv.getUint16(locOff + 26, true), le = dv.getUint16(locOff + 28, true);
+      var ini = locOff + 30 + ln + le;
+      out[nome] = bytes.slice(ini, ini + tam);
+      p += 46 + nl + el + cl;
+    }
+    return out;
+  }
+
+  function lerUltimoBackup() {
+    try { return localStorage.getItem("ultimoBackup"); } catch (e) { return null; }
+  }
+
+  async function exportarBackup() {
+    var itens = await operar("readonly", function (s) { return s.getAll(); });
+    if (!itens.length) { aviso("Ainda não há dados para exportar."); return; }
+    var enc = new TextEncoder(), entradas = [], lista = [];
+    for (var k = 0; k < itens.length; k++) {
+      var it = itens[k];
+      if (it.tipo === "audio" && it.blob) {
+        var m = it.mime || "";
+        var ext = m.indexOf("mp4") >= 0 ? "m4a" : m.indexOf("ogg") >= 0 ? "ogg" : "webm";
+        var arq = "audios/" + it.id + "." + ext;
+        entradas.push({ nome: arq, dados: new Uint8Array(await it.blob.arrayBuffer()) });
+        var copia = Object.assign({}, it);
+        delete copia.blob;
+        copia.arquivo = arq;
+        lista.push(copia);
+      } else {
+        lista.push(it);
+      }
+    }
+    var doc = { app: "meu-espaco", formato: 1, criadoEm: agora(), total: lista.length, itens: lista };
+    var json = JSON.stringify(doc);
+    var blob, nome;
+    if (entradas.length) {
+      entradas.unshift({ nome: "backup.json", dados: enc.encode(json) });
+      blob = criarZip(entradas);
+      nome = "meu-espaco-backup-" + hojeISO() + ".zip";
+    } else {
+      blob = new Blob([json], { type: "application/json" });
+      nome = "meu-espaco-backup-" + hojeISO() + ".json";
+    }
+    baixarArquivo(blob, nome);
+    try { localStorage.setItem("ultimoBackup", agora()); } catch (e) {}
+    aviso("Backup criado. Guarde o arquivo em um lugar seguro.");
+    irPara("config");
+  }
+
+  function baixarArquivo(blob, nome) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = nome;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+  }
+
+  function validarBackup(doc) {
+    if (!doc || doc.app !== "meu-espaco" || !Array.isArray(doc.itens)) return "Este arquivo não é um backup do Meu Espaço.";
+    var invalido = doc.itens.some(function (i) {
+      return !i || typeof i.id !== "string" || TIPOS_VALIDOS.indexOf(i.tipo) < 0;
+    });
+    return invalido ? "O backup contém registros fora do formato esperado. Nada foi alterado." : null;
+  }
+
+  function descreverBackup(doc) {
+    var cont = {};
+    doc.itens.forEach(function (i) { cont[i.tipo] = (cont[i.tipo] || 0) + 1; });
+    return Object.keys(cont).map(function (t) { return cont[t] + " " + ROTULOS[t]; }).join(", ") +
+      " (feito em " + fmtDH(doc.criadoEm) + ")";
+  }
+
+  async function aplicarBackup(doc, arquivos, substituir) {
+    try {
+      if (substituir) await operar("readwrite", function (s) { return s.clear(); });
+      var semAudio = 0;
+      for (var k = 0; k < doc.itens.length; k++) {
+        var item = Object.assign({}, doc.itens[k]);
+        if (item.tipo === "audio") {
+          if (item.arquivo && arquivos && arquivos[item.arquivo]) {
+            item.blob = new Blob([arquivos[item.arquivo]], { type: item.mime || "audio/webm" });
+          } else {
+            semAudio++;
+          }
+          delete item.arquivo;
+        }
+        await salvarItem(item);
+      }
+      aviso("Backup restaurado com sucesso." + (semAudio ? " " + semAudio + " gravação(ões) sem arquivo de áudio." : ""));
+      irPara("config");
+    } catch (err) {
+      console.error(err);
+      aviso("A restauração não foi concluída. Importe o backup novamente.");
+    }
+  }
+
+  async function importarArquivo(file) {
+    if (!file) return;
+    var doc, arquivos = null;
+    try {
+      var buf = await file.arrayBuffer();
+      var cabeca = new Uint8Array(buf, 0, Math.min(2, buf.byteLength));
+      if (cabeca[0] === 0x50 && cabeca[1] === 0x4b) {
+        arquivos = lerZip(buf);
+        if (!arquivos["backup.json"]) throw new Error("sem backup.json");
+        doc = JSON.parse(new TextDecoder().decode(arquivos["backup.json"]));
+      } else {
+        doc = JSON.parse(new TextDecoder().decode(buf));
+      }
+    } catch (err) {
+      console.error(err);
+      aviso("Este arquivo não pôde ser lido. Escolha um backup gerado pelo Meu Espaço.");
+      return;
+    }
+    var problema = validarBackup(doc);
+    if (problema) { aviso(problema); return; }
+
+    if (confirm("Backup encontrado: " + descreverBackup(doc) + ".\n\nOK = adicionar estes registros aos atuais (mesclar).\nCancelar = ver a opção de substituir tudo.")) {
+      await aplicarBackup(doc, arquivos, false);
+    } else if (confirm("Substituir TODOS os dados deste aparelho pelo backup?\n\nOs registros atuais serão apagados. Essa ação não pode ser desfeita.")) {
+      await aplicarBackup(doc, arquivos, true);
+    } else {
+      aviso("Restauração cancelada. Nada foi alterado.");
+    }
+  }
+
   /* ============ INÍCIO ============ */
   var h = new Date().getHours();
   document.getElementById("saudacao").textContent =
     (h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite") + ", que bom ter você aqui";
 
   try { aplicarTema(localStorage.getItem("tema")); } catch (e) {}
+
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault();
+    INSTALAR_EVENTO = e;
+  });
 
   if (navigator.storage && navigator.storage.persist) {
     navigator.storage.persist().then(function (ok) { PERSISTENTE = !!ok; }).catch(function () {});
